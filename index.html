@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Energy Monitor | Automated Electricity Billing & Monitoring System</title>
+  
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- FontAwesome Icons CDN -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-icon">
+        <i class="fa-solid fa-bolt-lightning"></i>
+      </div>
+      <div class="logo-text">
+        <h1>Smart Energy Monitor</h1>
+        <p>Automated Electricity Billing & Monitoring System (ESP32 Prototype)</p>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <!-- Demo / Live Mode Indicator -->
+      <div class="mode-badge demo-active" id="modeBadge">
+        <span class="pulse-dot"></span>
+        <span id="modeText">DEMO MODE ACTIVE</span>
+      </div>
+
+      <!-- Meter Status Badge -->
+      <div class="status-badge online" id="statusBadge">
+        <i class="fa-solid fa-signal" id="statusIcon"></i>
+        <span id="statusText">ESP32 ONLINE</span>
+      </div>
+
+      <!-- Quick Action Simulation Buttons for Exhibition -->
+      <div class="quick-actions">
+        <button class="btn btn-warning btn-sm" onclick="triggerHighConsumptionDemo()" title="Simulate High Power Load">
+          <i class="fa-solid fa-triangle-exclamation"></i> High Load
+        </button>
+        <button class="btn btn-danger btn-sm" onclick="triggerTamperDemo()" title="Simulate Push-Button Tamper Event">
+          <i class="fa-solid fa-shield-cat"></i> Tamper
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="resetDemoAlerts()" title="Reset All Alerts to Normal">
+          <i class="fa-solid fa-rotate-right"></i> Reset
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Global Alert Banners -->
+  <div id="tamperBanner" class="alert-banner tamper-banner hidden">
+    <div class="banner-content">
+      <i class="fa-solid fa-triangle-exclamation fa-beat"></i>
+      <div>
+        <strong>🚨 METER TAMPERING DETECTED!</strong>
+        <span>Physical switch trigger detected on Meter ID: <span class="meter-id-tag">TN-MTR-001</span>. Security alert logged to Electricity Board.</span>
+      </div>
+    </div>
+    <button class="banner-close" onclick="dismissBanner('tamperBanner')">&times;</button>
+  </div>
+
+  <div id="highPowerBanner" class="alert-banner warning-banner hidden">
+    <div class="banner-content">
+      <i class="fa-solid fa-bolt fa-shake"></i>
+      <div>
+        <strong>⚠ HIGH CONSUMPTION DETECTED!</strong>
+        <span>Current power draw (<span id="bannerPowerVal">145.8 W</span>) exceeds configured safe threshold (<span id="bannerThresholdVal">100 W</span>).</span>
+      </div>
+    </div>
+    <button class="banner-close" onclick="dismissBanner('highPowerBanner')">&times;</button>
+  </div>
+
+  <!-- Main Layout with Sidebar and Content View -->
+  <div class="app-layout">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <nav class="nav-menu">
+        <a href="#overview" class="nav-item active" onclick="switchTab('overview')">
+          <i class="fa-solid fa-gauge-high"></i>
+          <span>Overview</span>
+        </a>
+        <a href="#energy" class="nav-item" onclick="switchTab('energy')">
+          <i class="fa-solid fa-chart-line"></i>
+          <span>Energy Usage</span>
+        </a>
+        <a href="#billing" class="nav-item" onclick="switchTab('billing')">
+          <i class="fa-solid fa-file-invoice-dollar"></i>
+          <span>Billing</span>
+        </a>
+        <a href="#alerts" class="nav-item" onclick="switchTab('alerts')">
+          <i class="fa-solid fa-bell"></i>
+          <span>Alerts</span>
+          <span class="badge-count hidden" id="alertCountBadge">0</span>
+        </a>
+        <a href="#meter" class="nav-item" onclick="switchTab('meter')">
+          <i class="fa-solid fa-microchip"></i>
+          <span>Meter Details</span>
+        </a>
+        <a href="#eb" class="nav-item" onclick="switchTab('eb')">
+          <i class="fa-solid fa-building-columns"></i>
+          <span>EB Dashboard</span>
+        </a>
+        <a href="#settings" class="nav-item" onclick="switchTab('settings')">
+          <i class="fa-solid fa-sliders"></i>
+          <span>Settings</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="system-info">
+          <p class="sys-label">Target Hardware</p>
+          <p class="sys-val">ESP32 + INA219 + OLED</p>
+          <p class="sys-sub">Safety: Low Voltage DC</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Panels -->
+    <main class="main-content">
+
+      <!-- ================= SECTION 1: OVERVIEW ================= -->
+      <section id="section-overview" class="content-section active">
+        <div class="section-header">
+          <h2><i class="fa-solid fa-gauge-high"></i> System Overview</h2>
+          <span class="last-updated">Last Updated: <span id="lastUpdatedTime">--:--:--</span></span>
+        </div>
+
+        <!-- 4 Key Metric Cards -->
+        <div class="metrics-grid">
+          <div class="metric-card card-power">
+            <div class="card-icon"><i class="fa-solid fa-bolt"></i></div>
+            <div class="card-data">
+              <span class="card-label">Current Power Draw</span>
+              <h3 class="card-value" id="cardPower">0.0 <span class="unit">W</span></h3>
+              <span class="card-sub" id="cardPowerSub">Normal load</span>
+            </div>
+          </div>
+
+          <div class="metric-card card-energy">
+            <div class="card-icon"><i class="fa-solid fa-plug-circle-bolt"></i></div>
+            <div class="card-data">
+              <span class="card-label">Today's Energy</span>
+              <h3 class="card-value" id="cardTodayEnergy">0.00 <span class="unit">kWh</span></h3>
+              <span class="card-sub" id="cardEnergySub">Cumulative total</span>
+            </div>
+          </div>
+
+          <div class="metric-card card-bill">
+            <div class="card-icon"><i class="fa-solid fa-indian-rupee-sign"></i></div>
+            <div class="card-data">
+              <span class="card-label">Estimated Monthly Bill</span>
+              <h3 class="card-value" id="cardEstBill">₹0.00</h3>
+              <span class="card-sub badge-pill pill-normal" id="billPill">Normal Rate</span>
+            </div>
+          </div>
+
+          <div class="metric-card card-status">
+            <div class="card-icon"><i class="fa-solid fa-shield-halved"></i></div>
+            <div class="card-data">
+              <span class="card-label">Meter Health Status</span>
+              <h3 class="card-value status-text-online" id="cardMeterStatus">ONLINE</h3>
+              <span class="card-sub" id="cardTamperStatus">Tamper: Secure</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Parameters Strip -->
+        <div class="live-parameters-bar">
+          <div class="param-item">
+            <span class="param-title">Voltage</span>
+            <span class="param-value" id="paramVoltage">0.00 V</span>
+          </div>
+          <div class="param-divider"></div>
+          <div class="param-item">
+            <span class="param-title">Current</span>
+            <span class="param-value" id="paramCurrent">0.00 A</span>
+          </div>
+          <div class="param-divider"></div>
+          <div class="param-item">
+            <span class="param-title">Total Units Consumed</span>
+            <span class="param-value" id="paramTotalUnits">0.0000 kWh</span>
+          </div>
+          <div class="param-divider"></div>
+          <div class="param-item">
+            <span class="param-title">Sensor Hardware</span>
+            <span class="param-value text-blue">INA219 (I2C)</span>
+          </div>
+        </div>
+
+        <!-- Charts Grid -->
+        <div class="charts-grid">
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3><i class="fa-solid fa-chart-line"></i> Real-Time Power Draw (Watts)</h3>
+              <span class="chart-tag">Live Sensor Stream</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="livePowerChart"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3><i class="fa-solid fa-chart-column"></i> Daily Energy Consumption (kWh)</h3>
+              <span class="chart-tag">7-Day Trend</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="dailyEnergyChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECTION 2: ENERGY USAGE ================= -->
+      <section id="section-energy" class="content-section">
+        <div class="section-header">
+          <h2><i class="fa-solid fa-chart-pie"></i> Detailed Energy Consumption Analytics</h2>
+          <p class="section-sub">Analyze load patterns, peak demand spikes, and historical usage trends.</p>
+        </div>
+
+        <div class="charts-grid-full">
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3><i class="fa-solid fa-calendar-week"></i> Weekly Energy Consumption (kWh)</h3>
+              <span class="chart-tag">Past 4 Weeks</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="weeklyUsageChart"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-header">
+              <h3><i class="fa-solid fa-calendar-days"></i> Monthly Consumption Overview</h3>
+              <span class="chart-tag">Annual Trend</span>
+            </div>
+            <div class="chart-container">
+              <canvas id="monthlyUsageChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Load Statistics Summary Cards -->
+        <div class="stats-summary-row">
+          <div class="stat-mini-card">
+            <span class="stat-lbl">Peak Load (Today)</span>
+            <span class="stat-val text-amber" id="statPeakLoad">0.0 W</span>
+          </div>
+          <div class="stat-mini-card">
+            <span class="stat-lbl">Average Power</span>
+            <span class="stat-val text-blue" id="statAvgPower">0.0 W</span>
+          </div>
+          <div class="stat-mini-card">
+            <span class="stat-lbl">Minimum Power</span>
+            <span class="stat-val text-green" id="statMinPower">0.0 W</span>
+          </div>
+          <div class="stat-mini-card">
+            <span class="stat-lbl">Calculated Load Factor</span>
+            <span class="stat-val" id="statLoadFactor">0.82</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECTION 3: BILLING ================= -->
+      <section id="section-billing" class="content-section">
+        <div class="section-header">
+          <h2><i class="fa-solid fa-file-invoice-dollar"></i> Automated Electricity Billing System</h2>
+          <p class="section-sub">Calculate units consumed, tariff estimates, and generate digital E-Bills.</p>
+        </div>
+
+        <div class="billing-grid">
+          <!-- Billing Input & Calculation Card -->
+          <div class="panel-card">
+            <h3 class="panel-title"><i class="fa-solid fa-calculator"></i> Tariff & Usage Calculator</h3>
+            
+            <form id="billingForm" onsubmit="event.preventDefault(); generateEBill();">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="prevReading">Previous Meter Reading (kWh)</label>
+                  <input type="number" id="prevReading" value="1250" step="0.1" oninput="calculateBill()">
+                </div>
+                <div class="form-group">
+                  <label for="currReading">Current Meter Reading (kWh)</label>
+                  <input type="number" id="currReading" value="1380" step="0.1" oninput="calculateBill()">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="tariffRateInput">Tariff Rate (₹ / Unit)</label>
+                  <input type="number" id="tariffRateInput" value="8.00" step="0.5" oninput="calculateBill()">
+                </div>
+                <div class="form-group">
+                  <label for="calculatedUnits">Units Consumed (kWh)</label>
+                  <input type="text" id="calculatedUnits" value="130 kWh" readonly class="readonly-input">
+                </div>
+              </div>
+
+              <div class="billing-summary-box">
+                <div class="summary-line">
+                  <span>Energy Charges (<span id="sumUnits">130</span> units × ₹<span id="sumRate">8.00</span>)</span>
+                  <span id="sumEnergyCharge">₹1,040.00</span>
+                </div>
+                <div class="summary-line">
+                  <span>Fixed Meter Charge</span>
+                  <span>₹50.00</span>
+                </div>
+                <div class="summary-line">
+                  <span>Government Duty / Tax (5%)</span>
+                  <span id="sumTax">₹54.50</span>
+                </div>
+                <div class="summary-line total-line">
+                  <span>Total Payable Amount</span>
+                  <span id="sumTotalBill">₹1,144.50</span>
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button type="button" class="btn btn-primary btn-block" onclick="generateEBill()">
+                  <i class="fa-solid fa-receipt"></i> Generate Digital E-Bill
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Estimated Monthly Bill & Tariff Indicator -->
+          <div class="panel-card">
+            <h3 class="panel-title"><i class="fa-solid fa-chart-line"></i> Monthly Projection & Smart Rate Advisor</h3>
+            
+            <div class="projection-display">
+              <span class="proj-label">Estimated Monthly Bill</span>
+              <h2 class="proj-amount" id="projMonthlyBill">₹1,284.00</h2>
+              
+              <div class="tier-indicator-box">
+                <span class="tier-label">Current Consumption Tier:</span>
+                <span id="tierBadge" class="badge-pill pill-normal">NORMAL CONSUMPTION</span>
+              </div>
+            </div>
+
+            <div class="projection-details">
+              <div class="proj-row">
+                <span>Avg. Daily Consumption:</span>
+                <span id="projAvgDaily">4.28 kWh/day</span>
+              </div>
+              <div class="proj-row">
+                <span>Projected 30-Day Units:</span>
+                <span id="projMonthlyUnits">128.4 kWh</span>
+              </div>
+              <div class="proj-row">
+                <span>Recommended Saving Action:</span>
+                <span class="text-green font-semibold">Optimal Load Range</span>
+              </div>
+            </div>
+
+            <!-- Prototype Payment Card -->
+            <div class="payment-prototype-box">
+              <h4><i class="fa-solid fa-credit-card"></i> Digital Payment Gateway (Prototype)</h4>
+              <p>Simulate online bill payment via Net Banking / UPI</p>
+              <button class="btn btn-success btn-block mt-3" onclick="simulatePayment()">
+                <i class="fa-solid fa-lock"></i> Pay Bill (Simulated)
+              </button>
+              <div id="paymentStatusAlert" class="payment-alert hidden">
+                <i class="fa-solid fa-circle-check"></i> Payment simulation successful! Receipt generated.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Generated E-Bill Card Modal / Receipt View -->
+        <div id="ebillModal" class="ebill-card-modal hidden">
+          <div class="ebill-card">
+            <div class="ebill-header">
+              <div class="ebill-brand">
+                <i class="fa-solid fa-bolt"></i>
+                <div>
+                  <h4>TAMIL NADU ELECTRICITY BOARD (TNEB)</h4>
+                  <p>Smart Meter Automatic Billing Invoice</p>
+                </div>
+              </div>
+              <span class="bill-status-paid" id="billStatusTag">UNPAID</span>
+            </div>
+
+            <div class="ebill-body">
+              <div class="ebill-meta-grid">
+                <div>
+                  <span class="lbl">Consumer Name:</span>
+                  <span class="val">Household Prototype A</span>
+                </div>
+                <div>
+                  <span class="lbl">Meter Serial ID:</span>
+                  <span class="val" id="billMeterId">TN-MTR-001</span>
+                </div>
+                <div>
+                  <span class="lbl">Bill Date:</span>
+                  <span class="val" id="billDate">06 Oct 2026</span>
+                </div>
+                <div>
+                  <span class="lbl">Billing Cycle:</span>
+                  <span class="val">Monthly</span>
+                </div>
+              </div>
+
+              <table class="ebill-table">
+                <thead>
+                  <tr>
+                    <th>Reading Type</th>
+                    <th>Meter Value (kWh)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Previous Reading</td>
+                    <td id="bTablePrev">1250.0</td>
+                  </tr>
+                  <tr>
+                    <td>Current Reading</td>
+                    <td id="bTableCurr">1380.0</td>
+                  </tr>
+                  <tr class="highlight-row">
+                    <td>Total Billed Units</td>
+                    <td id="bTableUnits">130.0 kWh</td>
+                  </tr>
+                  <tr>
+                    <td>Applied Tariff Rate</td>
+                    <td id="bTableRate">₹8.00 / kWh</td>
+                  </tr>
+                  <tr class="total-row">
+                    <td>Net Amount Payable</td>
+                    <td id="bTableTotal">₹1,144.50</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div class="ebill-barcode">
+                <div class="barcode-lines">||| | |||| ||| ||||| || ||| | ||| ||||</div>
+                <p>INV-2026-TNEB-TN-MTR-001</p>
+              </div>
+            </div>
+
+            <div class="ebill-footer">
+              <button class="btn btn-secondary btn-sm" onclick="closeEBillModal()">Close Invoice</button>
+              <button class="btn btn-primary btn-sm" onclick="window.print()"><i class="fa-solid fa-print"></i> Print Bill</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECTION 4: ALERTS ================= -->
+      <section id="section-alerts" class="content-section">
+        <div class="section-header">
+          <h2><i class="fa-solid fa-bell"></i> Security & Consumption Alerts Console</h2>
+          <p class="section-sub">Real-time log of push-button meter tampering events and high power draw thresholds.</p>
+        </div>
+
+        <div class="alerts-summary-cards">
+          <div class="alert-summary-card alert-card-tamper">
+            <i class="fa-solid fa-shield-cat"></i>
+            <div>
+              <span class="title">Tampering Events</span>
+              <h3 id="countTamperAlerts">0</h3>
+            </div>
+          </div>
+          <div class="alert-summary-card alert-card-high">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <div>
+              <span class="title">High Load Alerts</span>
+              <h3 id="countHighLoadAlerts">0</h3>
+            </div>
+          </div>
+          <div class="alert-summary-card alert-card-secure">
+            <i class="fa-solid fa-circle-check"></i>
+            <div>
+              <span class="title">System Security</span>
+              <h3 id="securityStatusText" class="text-green">SECURE</h3>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-card mt-4">
+          <div class="panel-header-flex">
+            <h3><i class="fa-solid fa-list-check"></i> Live Event Logs</h3>
+            <button class="btn btn-secondary btn-sm" onclick="clearAlertLogs()">Clear Logs</button>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Event ID</th>
+                  <th>Timestamp</th>
+                  <th>Alert Type</th>
+                  <th>Meter ID</th>
+                  <th>Recorded Value</th>
+                  <th>Status</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody id="alertsTableBody">
+                <!-- Populated dynamically via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECTION 5: METER DETAILS ================= -->
+      <section id="section-meter" class="content-section">
+        <div class="section-header">
+          <h2><i class="fa-solid fa-microchip"></i> Smart Meter Hardware Inspector</h2>
+          <p class="section-sub">Hardware specifications, pin mapping, sensor readouts, and live communication telemetry.</p>
+        </div>
+
+        <div class="meter-details-grid">
+          <!-- Hardware Card -->
+          <div class="panel-card">
+            <h3 class="panel-title"><i class="fa-solid fa-diagram-project"></i> Hardware Configuration</h3>
+            <ul class="specs-list">
+              <li>
+                <span class="spec-label">Microcontroller:</span>
+                <span class="spec-val">ESP32 Wi-Fi NodeMCU</span>
+              </li>
+              <li>
+                <span class="spec-label">Current / Voltage Sensor:</span>
+                <span class="spec-val">INA219 I2C High-Side Sensor</span>
+              </li>
+              <li>
+                <span class="spec-label">Local Display:</span>
+                <span class="spec-val">0.96" SSD1306 OLED (128x64 I2C)</span>
+              </li>
+              <li>
+                <span class="spec-label">Tamper Detection:</span>
+                <span class="spec-val">Physical Push-Button Circuit</span>
+              </li>
+              <li>
+                <span class="spec-label">Status Indicator:</span>
+                <span class="spec-val">LED (Normal: OFF, Tamper: ON)</span>
+              </li>
+              <li>
+                <span class="spec-label">Safety Rating:</span>
+                <span class="spec-val text-green font-semibold">Low Voltage DC Prototype</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- Telemetry Live Card -->
+          <div class="panel-card">
+            <h3 class="panel-title"><i class="fa-solid fa-wave-square"></i> Real-Time Sensor Telemetry</h3>
+            
+            <div class="telemetry-grid">
+              <div class="telem-item">
+                <span class="lbl">Meter Serial ID</span>
+                <span class="val text-blue" id="meterDetailId">TN-MTR-001</span>
+              </div>
+              <div class="telem-item">
+                <span class="lbl">Connection Protocol</span>
+                <span class="val">HTTP POST (JSON)</span>
+              </div>
+              <div class="telem-item">
+                <span class="lbl">Bus Voltage</span>
+                <span class="val" id="meterDetailVoltage">5.02 V</span>
+              </div>
+              <div class="telem-item">
+                <span class="lbl">Shunt Current</span>
+                <span class="val" id="meterDetailCurrent">0.42 A</span>
+              </div>
+              <div class="telem-item">
+                <span class="lbl">Calculated Power</span>
+                <span class="val text-amber" id="meterDetailPower">2.11 W</span>
+              </div>
+              <div class="telem-item">
+                <span class="lbl">Accumulated Energy</span>
+                <span class="val text-green" id="meterDetailEnergy">0.0042 kWh</span>
+              </div>
+              <div class="telem-item">
+                <span class="lbl">Tamper Switch State</span>
+                <span class="val" id="meterDetailTamper">SECURE (False)</span>
+              </div>
+              <div class="telem-item">
+                <span class="lbl">Last Data Received</span>
+                <span class="val" id="meterDetailLastTime">--:--:--</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECTION 6: ELECTRICITY BOARD (EB) DASHBOARD ================= -->
+      <section id="section-eb" class="content-section">
+        <div class="section-header">
+          <h2><i class="fa-solid fa-building-columns"></i> Electricity Board (EB) Master Monitoring Station</h2>
+          <p class="section-sub">Grid-wide monitoring console for regional electricity distributors & inspectors.</p>
+        </div>
+
+        <!-- EB Grid Statistics -->
+        <div class="eb-stats-grid">
+          <div class="eb-card">
+            <i class="fa-solid fa-network-wired text-blue"></i>
+            <div>
+              <span class="lbl">Total Meters Registered</span>
+              <h3>5 Meters</h3>
+            </div>
+          </div>
+          <div class="eb-card">
+            <i class="fa-solid fa-circle-check text-green"></i>
+            <div>
+              <span class="lbl">Meters Online</span>
+              <h3 id="ebOnlineCount">5 / 5</h3>
+            </div>
+          </div>
+          <div class="eb-card">
+            <i class="fa-solid fa-triangle-exclamation text-amber"></i>
+            <div>
+              <span class="lbl">Active Load Alerts</span>
+              <h3 id="ebLoadAlerts">0</h3>
+            </div>
+          </div>
+          <div class="eb-card">
+            <i class="fa-solid fa-shield-cat text-red"></i>
+            <div>
+              <span class="lbl">Tamper Incidents</span>
+              <h3 id="ebTamperAlerts">0</h3>
+            </div>
+          </div>
+          <div class="eb-card">
+            <i class="fa-solid fa-indian-rupee-sign text-purple"></i>
+            <div>
+              <span class="lbl">Total Projected Revenue</span>
+              <h3 id="ebTotalRevenue">₹6,420</h3>
+            </div>
+          </div>
+        </div>
+
+        <!-- Regional Meters Table -->
+        <div class="panel-card mt-4">
+          <h3 class="panel-title"><i class="fa-solid fa-table-list"></i> Regional Smart Meter Fleet Directory</h3>
+
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Meter ID</th>
+                  <th>Location / Consumer</th>
+                  <th>Current Power (W)</th>
+                  <th>Today's Usage</th>
+                  <th>Connection Status</th>
+                  <th>Security Alert</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="ebMetersTableBody">
+                <!-- Dynamically updated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SECTION 7: SETTINGS ================= -->
+      <section id="section-settings" class="content-section">
+        <div class="section-header">
+          <h2><i class="fa-solid fa-sliders"></i> System Settings & API Configuration</h2>
+          <p class="section-sub">Configure HTTP endpoints, tariff rates, high load limits, and exhibition demo parameters.</p>
+        </div>
+
+        <div class="settings-grid">
+          <div class="panel-card">
+            <h3 class="panel-title"><i class="fa-solid fa-server"></i> API & Connectivity Parameters</h3>
+            
+            <form id="settingsForm" onsubmit="event.preventDefault(); saveSettings();">
+              <div class="form-group mb-3">
+                <label for="apiUrlInput">ESP32 Endpoint API URL</label>
+                <input type="text" id="apiUrlInput" value="http://localhost:5000/api/meter-data">
+                <small class="help-text">Endpoint where ESP32 sends HTTP POST requests.</small>
+              </div>
+
+              <div class="form-group mb-3">
+                <label for="meterIdInput">Primary Meter Serial ID</label>
+                <input type="text" id="meterIdInput" value="TN-MTR-001">
+              </div>
+
+              <div class="form-group mb-3">
+                <label for="tariffConfigInput">Tariff Rate (₹ per kWh)</label>
+                <input type="number" id="tariffConfigInput" value="8.00" step="0.5">
+              </div>
+
+              <div class="form-group mb-3">
+                <label for="thresholdInput">High Consumption Alert Threshold (Watts)</label>
+                <input type="number" id="thresholdInput" value="5.0" step="1">
+                <small class="help-text">Triggers high load warning banner when exceeded.</small>
+              </div>
+
+              <div class="form-group mb-3">
+                <label for="pollIntervalInput">Dashboard Auto-Refresh Interval (ms)</label>
+                <input type="number" id="pollIntervalInput" value="2000" step="500">
+              </div>
+
+              <div class="form-actions mt-4">
+                <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Settings</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Demo Mode Controls & Hackathon Preset Triggers -->
+          <div class="panel-card">
+            <h3 class="panel-title"><i class="fa-solid fa-sliders"></i> Hackathon Exhibition Simulator Controls</h3>
+            
+            <div class="toggle-control-box">
+              <div>
+                <strong>ESP32 Live Mode / Demo Mode Toggle</strong>
+                <p class="text-muted text-xs">Switch to Demo Mode if Wi-Fi or hardware is disconnected during presentation.</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="demoToggleCheckbox" onchange="toggleDemoMode(this.checked)" checked>
+                <span class="slider round"></span>
+              </label>
+            </div>
+
+            <hr class="divider">
+
+            <h4>Interactive Exhibition Presets</h4>
+            <p class="text-xs text-muted mb-3">Click these buttons to showcase real-time alerts without touching the physical ESP32:</p>
+
+            <div class="btn-group-vertical">
+              <button class="btn btn-warning" onclick="triggerHighConsumptionDemo()">
+                <i class="fa-solid fa-triangle-exclamation"></i> 1. Simulate High Power Load (> 100W)
+              </button>
+              <button class="btn btn-danger mt-2" onclick="triggerTamperDemo()">
+                <i class="fa-solid fa-shield-cat"></i> 2. Simulate Physical Tamper Event (Button Press)
+              </button>
+              <button class="btn btn-secondary mt-2" onclick="resetDemoAlerts()">
+                <i class="fa-solid fa-rotate-right"></i> 3. Reset System to Normal
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- JavaScript Script -->
+  <script src="script.js"></script>
+</body>
+</html>
